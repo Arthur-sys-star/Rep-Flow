@@ -1,0 +1,81 @@
+/* Run: node tests/workflows.cjs. Uses only built-in Node modules. */
+const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{webcrypto}=require('node:crypto');
+const root=path.resolve(__dirname,'..');const data=new Map();let writesFail=false,checks=0;
+const element=()=>({innerHTML:'',textContent:'',value:'',hidden:false,style:{},classList:{add(){},remove(){},toggle(){}},setAttribute(){},querySelectorAll(){return[]},querySelector(){return element()},addEventListener(){},focus(){},append(){},remove(){}});
+const elements=new Map();const document={body:{dataset:{page:'dashboard'},innerHTML:'',addEventListener(){}},getElementById(id){if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelector(){return null},querySelectorAll(){return[]},createElement:element,addEventListener(){},removeEventListener(){}};
+const ctx=vm.createContext({console,crypto:webcrypto,TextEncoder,URL,URLSearchParams,Blob,structuredClone,Date,setTimeout(){},clearTimeout(){},navigator:{locks:{request:async(name,fn)=>fn()}},document,localStorage:{getItem:k=>data.get(k)??null,setItem:(k,v)=>{if(writesFail)throw new Error('QuotaExceededError');data.set(k,v)},removeItem:k=>data.delete(k)},location:{search:'',protocol:'http:',href:'',replace(){}},window:{addEventListener(){}}});
+for(const file of ['storage','photos','utils','auth','api','seed','nav','tickets','billing','data'])vm.runInContext(fs.readFileSync(path.join(root,'js',file+'.js'),'utf8'),ctx,{filename:file+'.js'});
+// Evaluate the controller without auto-booting an actual browser document.
+vm.runInContext(fs.readFileSync(path.join(root,'js/app.js'),'utf8').replace(/App\.init\(\);\s*$/,''),ctx,{filename:'app.js'});
+const run=code=>vm.runInContext(code.includes("await ")?"(async()=>{"+code+"})()":code,ctx);const ok=(cond,label)=>{assert.ok(cond,label);checks++;};const eq=(actual,expected,label)=>{assert.equal(actual,expected,label);checks++;};
+async function reject(code,pattern){await assert.rejects(()=>run(code),pattern);checks++;}
+(async()=>{
+ await run('seedInitialData()');eq(run('Storage.getAll("users").length'),3,'three demo roles');eq(run('Storage.getAll("tickets").length'),4,'starter tickets');
+ const initial=data.get('repflow_db_v2');await run('seedInitialData()');eq(data.get('repflow_db_v2'),initial,'seeding never overwrites data');
+ await reject('Auth.login("admin@repflow.com","wrong","admin")',/Invalid email/);
+ await reject('Auth.login("admin@repflow.com","Admin@123","staff")',/Select the admin/);
+ await run('Auth.login("admin@repflow.com","Admin@123","admin")');eq(run('Auth.getUser().role'),'admin','admin login');ok(run('!!Auth.getToken()'),'session saved');
+ await run('globalThis.customer=await Repo.saveCustomer("",{name:"Test Customer",phone:"9876543210",email:"test@example.com",address:"Test address"})');
+ await run('globalThis.ticket=await Repo.saveTicket("",{customer_id:customer.id,device_type:"Laptop",model:"Test laptop",serial_number:"T123",issue:"Not charging",priority:"High",technician_id:"RF-TEC-0001",due_date:"2026-10-10",estimate:2000})');
+ eq(run('Storage.getById("tickets",ticket.id).status'),'New','ticket intake');
+ await reject('Repo.deleteCustomer(customer.id)',/repair history/);
+ await run('Repo.saveCustomer(customer.id,{name:"Updated Customer",phone:"9876543210",email:"test@example.com",address:"Updated address"})');eq(run('Storage.getById("customers",customer.id).name'),'Updated Customer','customer editing');
+ const beforeStock=run('Storage.getById("inventory","RF-PRT-0001").quantity');
+ await reject('Repo.usePart(ticket.id,"RF-PRT-0001",999999)',/Quantity/);
+ await reject('Repo.usePart(ticket.id,"RF-PRT-0001",999)',/Not enough stock/);
+ eq(run('Storage.getById("inventory","RF-PRT-0001").quantity'),beforeStock,'failed use preserves stock');
+ await run('Repo.usePart(ticket.id,"RF-PRT-0001",2)');eq(run('Storage.getById("inventory","RF-PRT-0001").quantity'),beforeStock-2,'stock consumed');eq(run('Storage.getById("tickets",ticket.id).parts[0].quantity'),2,'ticket parts recorded');
+ await run('Repo.returnPart(ticket.id,"RF-PRT-0001")');eq(run('Storage.getById("inventory","RF-PRT-0001").quantity'),beforeStock,'return restores stock');
+ await run('Repo.usePart(ticket.id,"RF-PRT-0001",2)');
+ await reject('Repo.setStatus(ticket.id,"Delivered","",{})',/not allowed/);
+ await run('Repo.setStatus(ticket.id,"Diagnosing","Checking charge port")');
+ await run('Repo.addNote(ticket.id,"Found damaged port")');eq(run('Storage.getById("tickets",ticket.id).notes.length'),1,'note persisted');
+ await run('Auth.login("technician@repflow.com","Tech@123","technician")');ok(run('Repo.visibleTickets().some(t=>t.id===ticket.id)'),'assigned ticket visible');ok(run('!Repo.visibleTickets().some(t=>t.technician_id==="RF-TEC-0002")'),'other technicians hidden');
+ await reject('Repo.saveCustomer("",{name:"Unauthorized",phone:"9876543210"})',/role/);
+ await reject('Repo.saveUser("",{name:"Bad",email:"bad@example.com",role:"admin",is_active:true,password:"Password123"})',/role/);
+ await reject('Repo.adjustStock("RF-PRT-0001",5,"unauthorized")',/role/);
+ await reject('Repo.addNote("RF-TKT-0002","Wrong ticket")',/not assigned/);
+ await run('Repo.setStatus(ticket.id,"In Progress","Repair started")');
+ await run('Repo.setStatus(ticket.id,"Testing","Port replaced")');
+ await run('Repo.setStatus(ticket.id,"Ready","Device passed checks")');
+ await reject('Repo.setStatus(ticket.id,"Delivered","",{tested:true,accessories:true,received:true})',/front-desk/);
+ await run('Auth.login("staff@repflow.com","Staff@123","staff")');
+ await reject('Repo.setStatus(ticket.id,"Delivered","",{tested:true,accessories:true,received:true})',/fully settle/);
+ await run('globalThis.invoice=await Repo.createInvoice({ticket_id:ticket.id,labor:500,tax_rate:18,discount:100,notes:"Test invoice"})');eq(run('invoice.total'),1534,'invoice totals: 900 + 500 - 100 + 234');
+ await reject('Repo.createInvoice({ticket_id:ticket.id,labor:500,tax_rate:0,discount:0})',/has an invoice/);
+ await reject('Repo.usePart(ticket.id,"RF-PRT-0001",1)',/has an invoice/);
+ await reject('Repo.recordPayment(invoice.id,{amount:2000,method:"Cash"})',/exceeds/);
+ await reject('Repo.recordPayment(invoice.id,{amount:100,method:"UPI",reference:""})',/Reference/);
+ await run('Repo.recordPayment(invoice.id,{amount:500,method:"Cash"})');eq(run('Repo.invoiceBalance(invoice).status'),'Partial','partial payment');eq(run('Repo.invoiceBalance(invoice).balance'),1034,'remaining balance');
+ await reject('Repo.deleteInvoice(invoice.id)',/recorded payments/);
+ await reject('Repo.setStatus(ticket.id,"Delivered","",{tested:true,accessories:true,received:true})',/fully settle/);
+ await run('Repo.recordPayment(invoice.id,{amount:1034,method:"UPI",reference:"TEST-UTR-0001"})');eq(run('Repo.invoiceBalance(invoice).status'),'Paid','fully paid');
+ await reject('Repo.setStatus(ticket.id,"Delivered","",{})',/handover/);
+ await run('Repo.setStatus(ticket.id,"Delivered","Collected",{tested:true,accessories:true,received:true})');eq(run('Storage.getById("tickets",ticket.id).status'),'Delivered','complete workflow delivered');
+ await reject('Repo.addNote(ticket.id,"Closed edit")',/closed/);
+ await run('Auth.login("admin@repflow.com","Admin@123","admin")');
+ await run('globalThis.cancelTicket=await Repo.saveTicket("",{customer_id:customer.id,device_type:"Mobile",model:"Return test",issue:"test",priority:"Normal",estimate:0})');
+ await run('Repo.usePart(cancelTicket.id,"RF-PRT-0002",1)');const cancelledBefore=run('Storage.getById("inventory","RF-PRT-0002").quantity');await run('Repo.setStatus(cancelTicket.id,"Cancelled","Customer declined")');eq(run('Storage.getById("inventory","RF-PRT-0002").quantity'),cancelledBefore+1,'cancel returns stock');
+ await reject('Repo.deleteTechnician("RF-TEC-0001")',/ticket history/);
+ await reject('Repo.saveUser("RF-USR-0001",{name:"Admin",email:"admin@repflow.com",role:"admin",is_active:false})',/own administrator/);
+ await reject('Repo.saveUser("",{name:"Duplicate",email:"admin@repflow.com",role:"staff",is_active:true,password:"Password123"})',/already exists/);
+ await run('globalThis.extra=await Repo.saveUser("",{name:"New account",email:"new@example.com",role:"staff",is_active:true,password:"NewPass123"})');
+ await run('Repo.saveUser(extra.id,{name:"New account",email:"new@example.com",role:"staff",is_active:false,password:"Changed123"})');
+ await reject('Auth.login("new@example.com","Changed123","staff")',/inactive/);
+ await run('Repo.saveSettings({business_name:"Test Workshop",upi_id:"test@bank",instructions:"Pay after confirmation"})');eq(run('Storage.database().payment_settings.business_name'),'Test Workshop','settings saved');eq(run('invoice.business.business_name'),'Rep-Flow Repair Services','invoice business snapshot preserved');
+ const good=data.get('repflow_db_v2');writesFail=true;await reject('Repo.adjustStock("RF-PRT-0001",2,"Quota test")',/storage is full/);eq(data.get('repflow_db_v2'),good,'quota failure preserves database');writesFail=false;
+ const payload=run('({format:"repflow-backup",version:2,database:Storage.database()})');ctx.backup=structuredClone(payload);run('DataUI.validate(backup)');checks++;
+ await run('PhotoStore.put("test-photo","data:image/jpeg;base64,YWJj")');eq(await run('PhotoStore.get("test-photo")'),'data:image/jpeg;base64,YWJj','photos use localStorage');await run('PhotoStore.remove("test-photo")');eq(await run('PhotoStore.get("test-photo")'),null,'photo removed');
+ await run('Repo.saveCustomer("",{name:"After backup",phone:"9876543210",email:"after@example.com",address:""})');await run('DataUI.restore(backup)');eq(run('Storage.getAll("customers").some(c=>c.name==="After backup")'),false,'restore replaces records');eq(run('Auth.getUser()'),null,'restore signs out');
+ ctx.bad=structuredClone(payload);ctx.bad.database.tickets[0].customer_id='missing';assert.throws(()=>run('DataUI.validate(bad)'),/Invalid ticket/);checks++;
+ await run('Auth.login("admin@repflow.com","Admin@123","admin")');
+ run('App.user=Auth.getUser();UI.content=document.getElementById("main");');
+ for(const page of ['dashboard','tickets','customers','technicians','inventory','billing','reports','users','payment-settings','audit-log','data']){
+  ctx.currentPage=page;await run('App.page=currentPage;App.q="";App.filter="";App.render()');ok(run('UI.content.innerHTML.length>300'),page+' renders HTML');
+ }
+ // Log back in from saved localStorage state; reload does not rebuild business records.
+ const persisted=data.get('repflow_db_v2');await run('seedInitialData()');eq(data.get('repflow_db_v2'),persisted,'reload preserves edited data');ok(run('Auth.isLoggedIn()'),'session persists across app reload');
+ run('UI.shell("dashboard",Auth.getUser())');ok(document.body.innerHTML.includes('data.html'),'admin navigation includes backup');
+ console.log(`PASS: ${checks} workflow, permissions, persistence, storage-failure, backup, and page-render assertions.`);
+ console.log('These tests do not replace interactive Chrome or visual layout testing.');
+})().catch(e=>{console.error(e);process.exitCode=1});

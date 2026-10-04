@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#164a5c">
+<meta name="description" content="Rep-Flow browser-local repair workshop management: tickets, inventory, customers and billing.">
+<title>Rep-Flow — Sign in</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main class="login-layout">
+  <section class="login-story" aria-label="About Rep-Flow">
+    <a class="login-logo" href="index.html"><span class="logo-mark">RF</span> Rep-Flow<span class="brand-dot">.</span></a>
+    <div class="login-pitch"><div class="eyebrow">YOUR REPAIR WORKSPACE</div><h1>Good repairs.<br>Great workflow.</h1><p>From the first service request to the final handover. Bring your workshop together in one place.</p>
+    <div class="login-journey"><div><span>01</span><b>Check in</b><p>Customers & devices</p></div><div><span>02</span><b>Repair</b><p>People & parts</p></div><div><span>03</span><b>Deliver</b><p>Invoices & handover</p></div></div></div>
+    <div class="login-bottom"><span class="local-indicator"><i></i> Your browser. Your workspace.</span><span>CLIENT EDITION</span></div>
+  </section>
+  <section class="login-panel"><div class="auth-card"><div class="auth-brand"><div class="eyebrow">LET’S GET TO WORK</div><h2>Sign in to Rep-Flow</h2><p class="muted">Choose your role to open your workspace.</p></div>
+    <div class="role-tabs" id="roleTabs" aria-label="Account role"><button type="button" data-role="admin" class="active" aria-pressed="true">Admin</button><button type="button" data-role="staff" aria-pressed="false">Staff</button><button type="button" data-role="technician" aria-pressed="false">Technician</button></div>
+    <div class="auth-error" id="loginError" role="alert"></div>
+    <form id="loginForm"><div class="field"><label for="email">Email address</label><input type="email" id="email" name="email" required autocomplete="username" placeholder="you@repflow.com"></div><div class="field"><label for="password">Password</label><input type="password" id="password" name="password" required autocomplete="current-password" placeholder="Enter your demo password"></div><label class="show-password"><input id="showPassword" type="checkbox"> Show password</label><button type="submit" class="btn btn-primary btn-block" id="loginBtn" disabled>Preparing workspace…</button></form>
+    <div class="demo-hint"><b>Explore the sample workspace</b><div id="demoHint">Admin: admin@repflow.com / Admin@123</div><button type="button" class="text-link" id="fillDemo">Use these demo credentials →</button></div>
+    <p class="auth-footnote">Browser-only demo. Data stays in this Chrome profile using localStorage. Use sample information and made-up passwords; browser-only roles are not a security boundary.</p><noscript><p>Enable JavaScript to use Rep-Flow.</p></noscript>
+  </div><p class="login-credit">Rep-Flow · From service request to successful delivery.</p></section>
+</main>
+<script src="js/storage.js" defer></script>
+<script src="js/utils.js" defer></script>
+<script src="js/auth.js" defer></script>
+<script src="js/seed.js" defer></script>
+<script src="js/login.js" defer></script>
+</body>
+</html>
